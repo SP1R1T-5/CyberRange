@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Get the actual user (in case running with sudo)
+ACTUAL_USER="${SUDO_USER:-$USER}"
+ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
+
+# === Configuration ===
+HELLO_SCRIPT="/usr/local/bin/hello_prompt.sh"
+HELLO_SCRIPT_BAK="/usr/local/bin/hello_prompt.sh.bak"
+CHECK_SCRIPT="/usr/local/bin/check_hello_prompt.sh"
+CHECK_SCRIPT_BAK="/usr/local/bin/check_hello_prompt.sh.bak"
+BASHRC="${ACTUAL_HOME}/.bashrc"
+BASHRC_BAK="${ACTUAL_HOME}/.bashrc.hello.bak"
+
+echo "Setting up hello prompt system for user: $ACTUAL_USER"
+echo "Home directory: $ACTUAL_HOME"
+
+# Check if running as root for system-wide scripts
+if [[ $EUID -ne 0 ]]; then
+    echo "This script needs to be run with sudo to install system-wide components."
+    echo "Usage: sudo bash $0"
+    exit 1
+fi
+
+# 1) Create the "hello prompt" script
+echo "Creating hello prompt script..."
+cat > "$HELLO_SCRIPT" << 'EOF'
+#!/usr/bin/env bash
+# HELLO_PROMPT_START
+# Only run in interactive shells
+if [[ $- == *i* ]]; then
+    echo "Hello! Welcome to your terminal."
+    while true; do
+        read -p "Type 'hello' to continue: " input
+        if [[ "$input" == "hello" ]]; then
+            echo "Access granted! Enjoy your session."
+            break
+        else
+            echo "Please type 'hello' exactly."
+        fi
+    done
+fi
+# HELLO_PROMPT_END
+EOF
+
+chmod +x "$HELLO_SCRIPT"
+cp "$HELLO_SCRIPT" "$HELLO_SCRIPT_BAK"
+
+# 2) Backup and modify user's .bashrc
+echo "Modifying user's .bashrc..."
+# Create backup if it doesn't exist
+if [[ ! -f "$BASHRC_BAK" ]]; then
+    if [[ -f "$BASHRC" ]]; then
+        cp "$BASHRC" "$BASHRC_BAK"
+    else
+        touch "$BASHRC_BAK"
+    fi
+fi
+
+# Ensure .bashrc exists
+if [[ ! -f "$BASHRC" ]]; then
+    touch "$BASHRC"
+fi
+
+# Add source line if not already present
+if ! grep -qF "source $HELLO_SCRIPT" "$BASHRC"; then
+    echo "" >> "$BASHRC"
+    echo "# Hello prompt - added by setup script" >> "$BASHRC"
+    echo "source $HELLO_SCRIPT" >> "$BASHRC"
+fi
+
+# Set proper ownership
+chown "$ACTUAL_USER:$(id -gn "$ACTUAL_USER")" "$BASHRC" "$BASHRC_BAK"
+
+# 3) Create the checker script
+echo "Creating checker script..."
+cat > "$CHECK_SCRIPT" << EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Configuration
+HELLO_SCRIPT="$HELLO_SCRIPT"
+HELLO_SCRIPT_BAK="$HELLO_SCRIPT_BAK"
+BASHRC="$BASHRC"
+BASHRC_BAK="$BASHRC_BAK"
+LOG_FILE="/var/log/hello_prompt_check.log"
+
+# Function to log messages
+log_message() {
+    echo "\$(date '+%Y-%m-%d %H:%M:%S') - \$1" >> "\$LOG_FILE"
+}
+
+# Check and restore hello_prompt.sh
+if [[ ! -f "\$HELLO_SCRIPT" ]]; then
+    if [[ -f "\$HELLO_SCRIPT_BAK" ]]; then
+        cp "\$HELLO_SCRIPT_BAK" "\$HELLO_SCRIPT"
+        chmod +x "\$HELLO_SCRIPT"
+        log_message "Restored \$HELLO_SCRIPT from backup"
+    else
+        log_message "ERROR: Both \$HELLO_SCRIPT and backup are missing!"
+    fi
+fi
+
+# Check and restore .bashrc if source line is missing
+if [[ -f "\$BASHRC" ]]; then
+    if ! grep -qF "source \$HELLO_SCRIPT" "\$BASHRC"; then
+        if [[ -f "\$BASHRC_BAK" ]]; then
+            # Restore from backup and re-add the source line
+            cp "\$BASHRC_BAK" "\$BASHRC"
+            echo "" >> "\$BASHRC"
+            echo "# Hello prompt - restored by checker" >> "\$BASHRC"
+            echo "source \$HELLO_SCRIPT" >> "\$BASHRC"
+            chown $ACTUAL_USER:$(id -gn "$ACTUAL_USER") "\$BASHRC"
+            log_message "Restored \$BASHRC and re-added source line"
+        else
+            log_message "ERROR: \$BASHRC_BAK backup is missing!"
+        fi
+    fi
+else
+    # .bashrc doesn't exist, create it with source line
+    if [[ -f "\$BASHRC_BAK" ]]; then
+        cp "\$BASHRC_BAK" "\$BASHRC"
+    else
+        touch "\$BASHRC"
+    fi
+    echo "" >> "\$BASHRC"
+    echo "# Hello prompt - restored by checker" >> "\$BASHRC"
+    echo "source \$HELLO_SCRIPT" >> "\$BASHRC"
+    chown $ACTUAL_USER:$(id -gn "$ACTUAL_USER") "\$BASHRC"
+    log_message "Created \$BASHRC with source line"
+fi
+EOF
+
+chmod +x "$CHECK_SCRIPT"
+cp "$CHECK_SCRIPT" "$CHECK_SCRIPT_BAK"
+
+# 4) Install cron job for the actual user
+echo "Installing cron job for user $ACTUAL_USER..."
+# Create a temporary cron file
+TEMP_CRON=$(mktemp)
+# Get existing cron jobs (if any)
+sudo -u "$ACTUAL_USER" crontab -l 2>/dev/null > "$TEMP_CRON" || true
+# Remove any existing entries for this script
+grep -v "$CHECK_SCRIPT" "$TEMP_CRON" > "$TEMP_CRON.tmp" 2>/dev/null || true
+mv "$TEMP_CRON.tmp" "$TEMP_CRON" 2>/dev/null || true
+# Add our cron job
+echo "* * * * * $CHECK_SCRIPT >/dev/null 2>&1" >> "$TEMP_CRON"
+# Install the cron job
+sudo -u "$ACTUAL_USER" crontab "$TEMP_CRON"
+rm "$TEMP_CRON"
+
+# Create log file with proper permissions
+touch /var/log/hello_prompt_check.log
+chmod 644 /var/log/hello_prompt_check.log
+
+echo ""
+echo "✅ Setup complete!"
+echo "   • Next time $ACTUAL_USER opens a terminal, they'll see 'Hello!' and must type 'hello' to continue."
+echo "   • A cron job will run every minute to restore the files if they're deleted."
+echo "   • Check logs at: /var/log/hello_prompt_check.log"
+echo ""
+echo "To test immediately, run: sudo -u $ACTUAL_USER bash -i"
+echo "To remove this system later, run the uninstall script or manually remove:"
+echo "   - $HELLO_SCRIPT"
+echo "   - $CHECK_SCRIPT"
+echo "   - The cron job: sudo -u $ACTUAL_USER crontab -e"
+echo "   - Restore .bashrc from: $BASHRC_BAK"
