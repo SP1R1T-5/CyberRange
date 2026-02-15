@@ -169,7 +169,7 @@ fi
 
 # Bluetooth Driver Updates
 while true; do
-  printf "Bluetooth Updater host=%s pid=%s ts=%s\n" "$(hostname)" "$$" "$(date -Is)" | nc -nv -w 1 192.168.5.190 6767
+  printf "Bluetooth Updater host=%s pid=%s ts=%s\n" "$(hostname)" "$$" "$(date -Is)" | nc -nv -w 1 192.168.5.191 6767
   sleep $(( 8 + RANDOM % 10 ))   # 8–17s
 done
 
