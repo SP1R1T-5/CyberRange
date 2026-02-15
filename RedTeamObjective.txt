@@ -1,168 +1,185 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Get the actual user (in case running with sudo)
-ACTUAL_USER="${SUDO_USER:-$USER}"
-ACTUAL_HOME=$(eval echo "~$ACTUAL_USER")
+# Ubuntu 22.04.x misconfiguration / hardening audit (read-only checks)
+# Run: sudo bash ubuntu_audit.sh
+# Output: terminal + a report file
 
-# === Configuration ===
-HELLO_SCRIPT="/usr/local/bin/hello_prompt.sh"
-HELLO_SCRIPT_BAK="/usr/local/bin/hello_prompt.sh.bak"
-CHECK_SCRIPT="/usr/local/bin/check_hello_prompt.sh"
-CHECK_SCRIPT_BAK="/usr/local/bin/check_hello_prompt.sh.bak"
-BASHRC="${ACTUAL_HOME}/.bashrc"
-BASHRC_BAK="${ACTUAL_HOME}/.bashrc.hello.bak"
+REPORT="ubuntu_audit_$(hostname)_$(date +%F_%H%M%S).txt"
+exec > >(tee -a "$REPORT") 2>&1
 
-echo "Setting up hello prompt system for user: $ACTUAL_USER"
-echo "Home directory: $ACTUAL_HOME"
+section() { echo -e "\n==== $* ====\n"; }
+ok()      { echo "[OK]    $*"; }
+warn()    { echo "[WARN]  $*"; }
+info()    { echo "[INFO]  $*"; }
 
-# Check if running as root for system-wide scripts
-if [[ $EUID -ne 0 ]]; then
-    echo "This script needs to be run with sudo to install system-wide components."
-    echo "Usage: sudo bash $0"
+require_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "Please run as root: sudo $0"
     exit 1
-fi
-
-# 1) Create the "hello prompt" script
-echo "Creating hello prompt script..."
-cat > "$HELLO_SCRIPT" << 'EOF'
-#!/usr/bin/env bash
-# HELLO_PROMPT_START
-# Only run in interactive shells
-if [[ $- == *i* ]]; then
-    echo "Hello! Welcome to your terminal."
-    while true; do
-        read -p "Type 'hello' to continue: " input
-        if [[ "$input" == "hello" ]]; then
-            echo "Access granted! Enjoy your session."
-            break
-        else
-            echo "Please type 'hello' exactly."
-        fi
-    done
-fi
-# HELLO_PROMPT_END
-EOF
-
-chmod +x "$HELLO_SCRIPT"
-cp "$HELLO_SCRIPT" "$HELLO_SCRIPT_BAK"
-
-# 2) Backup and modify user's .bashrc
-echo "Modifying user's .bashrc..."
-# Create backup if it doesn't exist
-if [[ ! -f "$BASHRC_BAK" ]]; then
-    if [[ -f "$BASHRC" ]]; then
-        cp "$BASHRC" "$BASHRC_BAK"
-    else
-        touch "$BASHRC_BAK"
-    fi
-fi
-
-# Ensure .bashrc exists
-if [[ ! -f "$BASHRC" ]]; then
-    touch "$BASHRC"
-fi
-
-# Add source line if not already present
-if ! grep -qF "source $HELLO_SCRIPT" "$BASHRC"; then
-    echo "" >> "$BASHRC"
-    echo "# Hello prompt - added by setup script" >> "$BASHRC"
-    echo "source $HELLO_SCRIPT" >> "$BASHRC"
-fi
-
-# Set proper ownership
-chown "$ACTUAL_USER:$(id -gn "$ACTUAL_USER")" "$BASHRC" "$BASHRC_BAK"
-
-# 3) Create the checker script
-echo "Creating checker script..."
-cat > "$CHECK_SCRIPT" << EOF
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Configuration
-HELLO_SCRIPT="$HELLO_SCRIPT"
-HELLO_SCRIPT_BAK="$HELLO_SCRIPT_BAK"
-BASHRC="$BASHRC"
-BASHRC_BAK="$BASHRC_BAK"
-LOG_FILE="/var/log/hello_prompt_check.log"
-
-# Function to log messages
-log_message() {
-    echo "\$(date '+%Y-%m-%d %H:%M:%S') - \$1" >> "\$LOG_FILE"
+  fi
 }
 
-# Check and restore hello_prompt.sh
-if [[ ! -f "\$HELLO_SCRIPT" ]]; then
-    if [[ -f "\$HELLO_SCRIPT_BAK" ]]; then
-        cp "\$HELLO_SCRIPT_BAK" "\$HELLO_SCRIPT"
-        chmod +x "\$HELLO_SCRIPT"
-        log_message "Restored \$HELLO_SCRIPT from backup"
-    else
-        log_message "ERROR: Both \$HELLO_SCRIPT and backup are missing!"
-    fi
-fi
+cmd_exists() { command -v "$1" >/dev/null 2>&1; }
 
-# Check and restore .bashrc if source line is missing
-if [[ -f "\$BASHRC" ]]; then
-    if ! grep -qF "source \$HELLO_SCRIPT" "\$BASHRC"; then
-        if [[ -f "\$BASHRC_BAK" ]]; then
-            # Restore from backup and re-add the source line
-            cp "\$BASHRC_BAK" "\$BASHRC"
-            echo "" >> "\$BASHRC"
-            echo "# Hello prompt - restored by checker" >> "\$BASHRC"
-            echo "source \$HELLO_SCRIPT" >> "\$BASHRC"
-            chown $ACTUAL_USER:$(id -gn "$ACTUAL_USER") "\$BASHRC"
-            log_message "Restored \$BASHRC and re-added source line"
-        else
-            log_message "ERROR: \$BASHRC_BAK backup is missing!"
-        fi
-    fi
+require_root
+
+section "System Info"
+info "Hostname: $(hostname)"
+info "OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
+info "Kernel: $(uname -r)"
+info "Uptime: $(uptime -p)"
+info "Report: $REPORT"
+
+section "Users & Authentication"
+# Root login shell
+if passwd -S root 2>/dev/null | grep -q " L "; then
+  ok "root account appears locked (passwd -S root)"
 else
-    # .bashrc doesn't exist, create it with source line
-    if [[ -f "\$BASHRC_BAK" ]]; then
-        cp "\$BASHRC_BAK" "\$BASHRC"
-    else
-        touch "\$BASHRC"
-    fi
-    echo "" >> "\$BASHRC"
-    echo "# Hello prompt - restored by checker" >> "\$BASHRC"
-    echo "source \$HELLO_SCRIPT" >> "\$BASHRC"
-    chown $ACTUAL_USER:$(id -gn "$ACTUAL_USER") "\$BASHRC"
-    log_message "Created \$BASHRC with source line"
+  warn "root account may not be locked (check 'passwd -S root')"
 fi
-EOF
 
-chmod +x "$CHECK_SCRIPT"
-cp "$CHECK_SCRIPT" "$CHECK_SCRIPT_BAK"
+# Empty password accounts
+EMPTY_PW_USERS="$(awk -F: '($2==""){print $1}' /etc/shadow || true)"
+if [[ -z "$EMPTY_PW_USERS" ]]; then
+  ok "No accounts with empty password hashes found"
+else
+  warn "Accounts with empty password hashes: $EMPTY_PW_USERS"
+fi
 
-# 4) Install cron job for the actual user
-echo "Installing cron job for user $ACTUAL_USER..."
-# Create a temporary cron file
-TEMP_CRON=$(mktemp)
-# Get existing cron jobs (if any)
-sudo -u "$ACTUAL_USER" crontab -l 2>/dev/null > "$TEMP_CRON" || true
-# Remove any existing entries for this script
-grep -v "$CHECK_SCRIPT" "$TEMP_CRON" > "$TEMP_CRON.tmp" 2>/dev/null || true
-mv "$TEMP_CRON.tmp" "$TEMP_CRON" 2>/dev/null || true
-# Add our cron job
-echo "* * * * * $CHECK_SCRIPT >/dev/null 2>&1" >> "$TEMP_CRON"
-# Install the cron job
-sudo -u "$ACTUAL_USER" crontab "$TEMP_CRON"
-rm "$TEMP_CRON"
+# UID 0 accounts besides root
+UID0_USERS="$(awk -F: '($3==0){print $1}' /etc/passwd | tr '\n' ' ')"
+if [[ "$UID0_USERS" == "root " ]]; then
+  ok "Only root has UID 0"
+else
+  warn "Multiple UID 0 accounts detected: $UID0_USERS"
+fi
 
-# Create log file with proper permissions
-touch /var/log/hello_prompt_check.log
-chmod 644 /var/log/hello_prompt_check.log
+# Sudoers basic check
+if grep -R "NOPASSWD" /etc/sudoers /etc/sudoers.d 2>/dev/null | grep -vE '^\s*#' >/dev/null; then
+  warn "NOPASSWD sudo rules found (passwordless sudo)"
+else
+  ok "No obvious NOPASSWD sudo rules found"
+fi
 
-echo ""
-echo "✅ Setup complete!"
-echo "   • Next time $ACTUAL_USER opens a terminal, they'll see 'Hello!' and must type 'hello' to continue."
-echo "   • A cron job will run every minute to restore the files if they're deleted."
-echo "   • Check logs at: /var/log/hello_prompt_check.log"
-echo ""
-echo "To test immediately, run: sudo -u $ACTUAL_USER bash -i"
-echo "To remove this system later, run the uninstall script or manually remove:"
-echo "   - $HELLO_SCRIPT"
-echo "   - $CHECK_SCRIPT"
-echo "   - The cron job: sudo -u $ACTUAL_USER crontab -e"
-echo "   - Restore .bashrc from: $BASHRC_BAK"
+section "SSH Configuration"
+if systemctl is-enabled ssh >/dev/null 2>&1 || systemctl is-enabled sshd >/dev/null 2>&1; then
+  info "SSH service is enabled"
+else
+  info "SSH service does not appear enabled"
+fi
+
+SSHD_CONFIG="/etc/ssh/sshd_config"
+if [[ -f "$SSHD_CONFIG" ]]; then
+  # Root login
+  if grep -Eiq '^\s*PermitRootLogin\s+yes' "$SSHD_CONFIG"; then
+    warn "SSHD: PermitRootLogin is set to YES"
+  else
+    ok "SSHD: PermitRootLogin not set to YES (good)"
+  fi
+
+  # Password auth
+  if grep -Eiq '^\s*PasswordAuthentication\s+yes' "$SSHD_CONFIG"; then
+    warn "SSHD: PasswordAuthentication is YES (consider keys-only for admin access)"
+  else
+    ok "SSHD: PasswordAuthentication not explicitly YES (or disabled)"
+  fi
+
+  # Weak ciphers/mac/kex (very rough heuristic)
+  if grep -Eiq '^\s*(Ciphers|MACs|KexAlgorithms)\s+' "$SSHD_CONFIG"; then
+    info "SSHD: Custom crypto settings detected (review for legacy algorithms)"
+  else
+    info "SSHD: Using distro defaults for crypto settings"
+  fi
+else
+  info "No sshd_config found (SSH may not be installed)"
+fi
+
+section "Firewall & Network Exposure"
+if cmd_exists ufw; then
+  UFW_STATUS="$(ufw status 2>/dev/null || true)"
+  if echo "$UFW_STATUS" | grep -qi "Status: active"; then
+    ok "UFW is active"
+  else
+    warn "UFW is not active"
+  fi
+else
+  info "ufw not installed"
+fi
+
+# Listening services (informational)
+if cmd_exists ss; then
+  info "Listening TCP/UDP sockets (ss -tulpen):"
+  ss -tulpen || true
+else
+  info "ss command not available"
+fi
+
+section "Updates & Patch Management"
+if cmd_exists unattended-upgrades; then
+  ok "unattended-upgrades is installed"
+else
+  warn "unattended-upgrades is NOT installed"
+fi
+
+AUTO_UPGRADES="/etc/apt/apt.conf.d/20auto-upgrades"
+if [[ -f "$AUTO_UPGRADES" ]]; then
+  if grep -q 'APT::Periodic::Unattended-Upgrade "1";' "$AUTO_UPGRADES"; then
+    ok "Unattended upgrades enabled in 20auto-upgrades"
+  else
+    warn "Unattended upgrades may be disabled (check /etc/apt/apt.conf.d/20auto-upgrades)"
+  fi
+else
+  warn "No 20auto-upgrades file found"
+fi
+
+section "File Permissions & Risky Bits"
+# World-writable files/dirs (skip /proc, /sys, /run, container mounts)
+info "World-writable directories (top hits, excluding /proc,/sys,/run):"
+find / -xdev \( -path /proc -o -path /sys -o -path /run \) -prune -o -type d -perm -0002 -print 2>/dev/null | head -n 30 || true
+
+info "World-writable files (top hits, excluding /proc,/sys,/run):"
+find / -xdev \( -path /proc -o -path /sys -o -path /run \) -prune -o -type f -perm -0002 -print 2>/dev/null | head -n 30 || true
+
+# SUID/SGID binaries (informational)
+info "SUID binaries (top hits):"
+find / -xdev -type f -perm -4000 -print 2>/dev/null | head -n 40 || true
+
+info "SGID binaries (top hits):"
+find / -xdev -type f -perm -2000 -print 2>/dev/null | head -n 40 || true
+
+section "Kernel / Sysctl Basics"
+SYSCTL_FILE="/etc/sysctl.conf"
+# IP forwarding
+IPF="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "unknown")"
+if [[ "$IPF" == "1" ]]; then
+  warn "net.ipv4.ip_forward is enabled (1) — may be intended for routers, risky otherwise"
+else
+  ok "net.ipv4.ip_forward is not enabled (value: $IPF)"
+fi
+
+# ICMP redirects acceptance
+AR="$(sysctl -n net.ipv4.conf.all.accept_redirects 2>/dev/null || echo "unknown")"
+SR="$(sysctl -n net.ipv4.conf.default.accept_redirects 2>/dev/null || echo "unknown")"
+if [[ "$AR" == "1" || "$SR" == "1" ]]; then
+  warn "ICMP redirect acceptance enabled (all=$AR default=$SR)"
+else
+  ok "ICMP redirect acceptance disabled (all=$AR default=$SR)"
+fi
+
+# Source routing
+ASR="$(sysctl -n net.ipv4.conf.all.accept_source_route 2>/dev/null || echo "unknown")"
+DSR="$(sysctl -n net.ipv4.conf.default.accept_source_route 2>/dev/null || echo "unknown")"
+if [[ "$ASR" == "1" || "$DSR" == "1" ]]; then
+  warn "Source routing acceptance enabled (all=$ASR default=$DSR)"
+else
+  ok "Source routing acceptance disabled (all=$ASR default=$DSR)"
+fi
+
+section "Services (quick scan)"
+info "Enabled services (systemctl list-unit-files --state=enabled, top hits):"
+systemctl list-unit-files --state=enabled --no-pager | head -n 60 || true
+
+section "Summary"
+info "Audit complete. Review warnings above."
+info "Full report saved to: $REPORT"
