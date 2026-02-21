@@ -1,8 +1,8 @@
-# Add-UsersToGroups.ps1
-# Adds service accounts to specified Active Directory groups
-# Requires: ActiveDirectory PowerShell module (RSAT)
+# Add-LocalUsersToGroups.ps1
+# Adds local user accounts to local groups (no Active Directory / domain required)
+# Run as Administrator
 
-#Requires -Modules ActiveDirectory
+#Requires -RunAsAdministrator
 
 # --- Configuration ---
 $Users = @(
@@ -30,21 +30,20 @@ $ErrorActionPreference = "Continue"
 $Results = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 foreach ($Group in $Groups) {
-    # Verify group exists
+    # Verify group exists locally
     try {
-        $ADGroup = Get-ADGroup -Identity $Group -ErrorAction Stop
+        $LocalGroup = Get-LocalGroup -Name $Group -ErrorAction Stop
     } catch {
-        Write-Warning "Group '$Group' not found in AD. Skipping."
+        Write-Warning "Group '$Group' not found on this machine. Skipping."
         continue
     }
 
     foreach ($User in $Users) {
-        # Verify user/object exists (could be a user or computer account)
+        # Verify user exists locally
         try {
-            $ADObject = Get-ADObject -Filter { SamAccountName -eq $User } -ErrorAction Stop
-            if (-not $ADObject) { throw "Not found" }
+            $LocalUser = Get-LocalUser -Name $User -ErrorAction Stop
         } catch {
-            Write-Warning "User/object '$User' not found in AD. Skipping."
+            Write-Warning "User '$User' not found on this machine. Skipping."
             $Results.Add([PSCustomObject]@{
                 User   = $User
                 Group  = $Group
@@ -54,8 +53,8 @@ foreach ($Group in $Groups) {
         }
 
         # Check if already a member
-        $IsMember = Get-ADGroupMember -Identity $Group -Recursive |
-                    Where-Object { $_.SamAccountName -eq $User }
+        $IsMember = Get-LocalGroupMember -Group $Group -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like "*\$User" -or $_.Name -eq $User }
 
         if ($IsMember) {
             Write-Host "  [SKIP]  '$User' is already a member of '$Group'" -ForegroundColor Yellow
@@ -66,7 +65,7 @@ foreach ($Group in $Groups) {
             })
         } else {
             try {
-                Add-ADGroupMember -Identity $Group -Members $User -ErrorAction Stop
+                Add-LocalGroupMember -Group $Group -Member $User -ErrorAction Stop
                 Write-Host "  [OK]    Added '$User' to '$Group'" -ForegroundColor Green
                 $Results.Add([PSCustomObject]@{
                     User   = $User
