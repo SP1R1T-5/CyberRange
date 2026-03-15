@@ -1,6 +1,6 @@
 #Installing SSH Package
 write-output "Downloading SSH..."
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 -Source "https://aka.ms/getwinget"
 
 #Starting SSH and enabling automatic startup
 write-output "Starting SSH"
